@@ -168,7 +168,7 @@ struct senss_sensor_info {
  */
 struct senss_callback_list {
 	senss_data_event_t on_data_event;
-	senss_bios_event_t on_bios_event;
+	senss_bias_event_t on_bios_event;
 	senss_flush_complete_t on_flush_complete;
 };
 

@@ -1,0 +1,9 @@
+# Copyright (c) 2023, Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
+#
+
+description: Sensor Subsystem (senss)
+
+compatible: "zephyr,senss"
+
+# To add senss related common feature

@@ -1,0 +1,18 @@
+# Copyright (c) 2023 Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
+
+config SENSS
+	bool "Sensor Subsystem"
+	default y
+	depends on DT_HAS_ZEPHYR_SENSS_ENABLED
+	select RING_BUFFER
+	help
+	  Enable Sensor Subsystem.
+
+if SENSS
+
+module = SENSS
+module-str = senss
+source "subsys/logging/Kconfig.template.log_config"
+
+endif # SENSS
