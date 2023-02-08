@@ -8,3 +8,5 @@ zephyr_library_sources(
 	senss.c
 	senss_sensor.c
 )
+
+add_subdirectory_ifdef(CONFIG_SENSS_SENSOR_PHY_3D_SENSOR sensor/phy_3d_sensor)

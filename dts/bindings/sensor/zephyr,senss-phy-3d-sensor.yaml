@@ -1,0 +1,9 @@
+# Copyright (c) 2023, Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
+#
+
+description: Sensor subsystem (senss) physical 3d sensors(accel, gyro, mag) bindings.
+
+compatible: "zephyr,senss-phy-3d-sensor"
+
+include: zephyr,senss-phy-sensor.yaml

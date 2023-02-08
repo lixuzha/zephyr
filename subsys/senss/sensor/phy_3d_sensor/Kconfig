@@ -1,0 +1,9 @@
+# Copyright (c) 2023 Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
+
+config SENSS_SENSOR_PHY_3D_SENSOR
+	bool "Senss physical 3d sensors(accel, gyro, mag)"
+	default y
+	depends on DT_HAS_ZEPHYR_SENSS_PHY_3D_SENSOR_ENABLED
+	help
+	  Enable senss physical 3d sensors(accel, gyro, mag).
