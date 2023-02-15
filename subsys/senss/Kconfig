@@ -15,4 +15,7 @@ module = SENSS
 module-str = senss
 source "subsys/logging/Kconfig.template.log_config"
 
+source "subsys/senss/sensor/phy_3d_sensor/Kconfig"
+source "subsys/senss/sensor/hinge_angle/Kconfig"
+
 endif # SENSS

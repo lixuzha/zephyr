@@ -1,0 +1,10 @@
+# Copyright (c) 2023, Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
+#
+
+description: Sensor subsystem (senss) hinge angle sensor bindings.
+
+compatible: "zephyr,senss-hinge-angle"
+
+# Common senss sensor properties.
+include: ["zephyr,senss-sensor.yaml"]
