@@ -1,0 +1,63 @@
+/*
+ * Copyright (c) 2023 Intel Corporation
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+&i2c0 {
+	bmi160_i2c: bmi@68 {
+		compatible = "bosch,bmi160";
+		reg = <0x68>;
+	};
+};
+
+&spi0 {
+	bmi160_spi: bmi@3 {
+		compatible = "bosch,bmi160";
+		spi-max-frequency = <50000000>;
+		reg = <0x3>;
+	};
+};
+
+/ {
+	senss: senss-node {
+		compatible = "zephyr,senss";
+		status = "okay";
+
+		base_accel: base-accel {
+			compatible = "zephyr,senss-phy-3d-sensor";
+			status = "okay";
+			sensor-type = <0x73>;
+			sensor-index = <0>;
+			friendly-name = "Base Accelerometer Sensor";
+			minimal-interval = <625>;
+			rotation-matrix = <0 1 0
+					   1 0 0
+					   0 0 (-1)>;
+			underlying-device = <&bmi160_i2c>;
+		};
+
+		lid_accel: lid-accel {
+			compatible = "zephyr,senss-phy-3d-sensor";
+			status = "okay";
+			sensor-type = <0x73>;
+			sensor-index = <1>;
+			friendly-name = "Lid Accelerometer Sensor";
+			minimal-interval = <625>;
+			rotation-matrix = <1 0 0
+					   0 1 0
+					   0 0 (-1)>;
+			underlying-device = <&bmi160_spi>;
+		};
+
+		hinge_angle: hinge-angle {
+			compatible = "zephyr,senss-hinge-angle";
+			status = "okay";
+			sensor-type = <0x20B>;
+			sensor-index = <0>;
+			friendly-name = "Hinge Angle Sensor";
+			reporters = <&base_accel &lid_accel>;
+			minimal-interval = <100000>;
+		};
+	};
+};
