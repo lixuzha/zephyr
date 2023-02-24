@@ -1967,6 +1967,23 @@ Retention:
   labels:
     - "area: Retention"
 
+Sensor Subsystem:
+  status: maintained
+  maintainers:
+    - lixuzha
+    - ghu0510
+  collaborators:
+    - qianruh
+  files:
+    - dts/bindings/sensor/zephyr,senss.yaml
+    - dts/bindings/sensor/zephyr,senss*.yaml
+    - include/zephyr/senss/
+    - doc/services/senss/
+    - subsys/senss/
+    - samples/subsys/senss/
+  labels:
+    - "area: Sensor Subsystem"
+
 Twister:
   status: maintained
   maintainers:
