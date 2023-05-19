@@ -130,3 +130,8 @@ if(CONFIG_USB_HOST_STACK)
   zephyr_iterable_section(NAME usbh_contex GROUP DATA_REGION ${XIP_ALIGN_WITH_INPUT} SUBALIGN 4)
   zephyr_iterable_section(NAME usbh_class_data GROUP DATA_REGION ${XIP_ALIGN_WITH_INPUT} SUBALIGN 4)
 endif()
+
+if(CONFIG_SENSING)
+  zephyr_iterable_section(NAME sensing_sensor_info GROUP DATA_REGION ${XIP_ALIGN_WITH_INPUT} SUBALIGN 4)
+  zephyr_iterable_section(NAME sensing_dt_info GROUP DATA_REGION ${XIP_ALIGN_WITH_INPUT} SUBALIGN 4)
+endif()

@@ -120,6 +120,11 @@
 	ITERABLE_SECTION_RAM(rtio_cqe_pool, 4)
 #endif /* CONFIG_RTIO */
 
+#if defined(CONFIG_SENSING)
+	ITERABLE_SECTION_RAM(sensing_sensor_info, 4)
+	ITERABLE_SECTION_RAM(sensing_dt_info, 4)
+#endif /* CONFIG_SENSING */
+
 #ifdef CONFIG_USERSPACE
 	_static_kernel_objects_end = .;
 #endif
