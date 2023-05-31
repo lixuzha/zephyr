@@ -17,11 +17,11 @@
 
 LOG_MODULE_REGISTER(sensing, CONFIG_SENSING_LOG_LEVEL);
 
-DT_FOREACH_CHILD_STATUS_OKAY(DT_DRV_INST(0), SENSING_SENSOR_DT_INFO)
+DT_FOREACH_CHILD_STATUS_OKAY(DT_DRV_INST(0), SENSING_DT_INFO_DEFINE)
 
-static struct sensing_dt_info *sensors_dt_list[] = {
-	DT_FOREACH_CHILD_STATUS_OKAY(DT_DRV_INST(0), SENSING_DT_ITEM)
-};
+#define SENSING_SENSOR_NUM (sizeof((int []){DT_FOREACH_CHILD_STATUS_OKAY_SEP(	\
+				DT_DRV_INST(0), DT_NODE_EXISTS, (,))}) /	\
+				sizeof(int))
 
 /**
  * @struct sensing_context
@@ -30,11 +30,11 @@ static struct sensing_dt_info *sensors_dt_list[] = {
 struct sensing_context {
 	bool sensing_initialized;
 	int sensor_num;
-	struct sensing_sensor *sensors[ARRAY_SIZE(sensors_dt_list)];
+	struct sensing_sensor *sensors[SENSING_SENSOR_NUM];
 };
 
 static struct sensing_context sensing_ctx = {
-	.sensor_num = ARRAY_SIZE(sensors_dt_list),
+	.sensor_num = SENSING_SENSOR_NUM,
 };
 
 
@@ -175,11 +175,10 @@ static struct sensing_sensor *create_sensor(struct sensing_dt_info *dt)
 static int sensing_init(void)
 {
 	struct sensing_context *ctx = &sensing_ctx;
-	struct sensing_dt_info **dt_list = sensors_dt_list;
 	struct sensing_sensor *sensor;
 	enum sensing_sensor_state state;
 	int ret = 0;
-	int i;
+	int i = 0;
 
 	LOG_INF("sensing init begin...");
 
@@ -193,13 +192,13 @@ static int sensing_init(void)
 		return 0;
 	}
 
-	for (i = 0; i < ctx->sensor_num; i++) {
-		sensor = create_sensor(*dt_list++);
+	STRUCT_SECTION_FOREACH(sensing_dt_info, dt_info) {
+		sensor = create_sensor(dt_info);
 		if (!sensor) {
 			LOG_ERR("sensing init, create sensor error");
 			return -EINVAL;
 		}
-		ctx->sensors[i] = sensor;
+		ctx->sensors[i++] = sensor;
 	}
 
 	for_each_sensor(ctx, i, sensor) {
@@ -288,17 +287,16 @@ int get_sensitivity(struct sensing_connection *conn, int8_t index, uint32_t *sen
 
 int sensing_get_sensors(int *sensor_nums, const struct sensing_sensor_info **info)
 {
-	int i;
+	int i = 0;
 
 	__ASSERT(info, "sensing get sensors, sensor info not be NULL");
 
-	*sensor_nums = ARRAY_SIZE(sensors_dt_list);
-	for (i = 0; i < *sensor_nums; i++) {
-		info[i] = &sensors_dt_list[i]->info;
+	*sensor_nums = SENSING_SENSOR_NUM;
+	STRUCT_SECTION_FOREACH(sensing_dt_info, dt_info) {
+		info[i++] = &dt_info->info;
 	}
 
 	return 0;
 }
-
 
 SYS_INIT(sensing_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);

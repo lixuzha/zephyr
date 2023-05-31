@@ -42,6 +42,10 @@
 	ITERABLE_SECTION_RAM(pm_device_slots, 4)
 #endif
 
+#if CONFIG_SENSING
+	ITERABLE_SECTION_RAM(sensing_dt_info, 4)
+#endif
+
 #if defined(CONFIG_HAS_DYNAMIC_DEVICE_HANDLES)
 	SECTION_DATA_PROLOGUE(device_handles,,)
 	{
