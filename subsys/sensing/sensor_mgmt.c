@@ -17,6 +17,7 @@
 
 LOG_MODULE_REGISTER(sensing, CONFIG_SENSING_LOG_LEVEL);
 
+DT_FOREACH_CHILD_STATUS_OKAY(DT_DRV_INST(0), SENSING_SENSOR_INFO_DEFINE)
 DT_FOREACH_CHILD_STATUS_OKAY(DT_DRV_INST(0), SENSING_DT_INFO_DEFINE)
 
 #define SENSING_SENSOR_NUM (sizeof((int []){DT_FOREACH_CHILD_STATUS_OKAY_SEP(	\
@@ -97,7 +98,7 @@ static int init_sensor(struct sensing_sensor *sensor, int conns_num)
 		sensor->mode = SENSOR_TRIGGER_MODE_POLLING;
 	}
 
-	return sensor_api->init(sensor->dt->dev, &sensor->dt->info, tmp_conns, conns_num);
+	return sensor_api->init(sensor->dt->dev, sensor->dt->info, tmp_conns, conns_num);
 }
 
 /* create struct sensing_sensor *sensor according to sensor device tree */
@@ -151,11 +152,11 @@ static struct sensing_sensor *create_sensor(struct sensing_dt_info *dt)
 	__ASSERT(tmp_data == ((uint8_t *)sensor + total_size), "sensor memory assign error");
 
 	sensor->dt = dt;
-	sensor->dt->info.flags = sensor_ctx->register_info->flags;
-	sensor->dt->info.version = sensor_ctx->register_info->version;
+	sensor->dt->info->flags = sensor_ctx->register_info->flags;
+	sensor->dt->info->version = sensor_ctx->register_info->version;
 
 	LOG_INF("create sensor, sensor:%s, min_ri:%d(us)",
-		sensor->dt->dev->name, sensor->dt->info.minimal_interval);
+		sensor->dt->dev->name, sensor->dt->info->minimal_interval);
 
 	sensor->interval = 0;
 	sensor->sensitivity_count = sensor_ctx->register_info->sensitivity_count;
@@ -287,14 +288,10 @@ int get_sensitivity(struct sensing_connection *conn, int8_t index, uint32_t *sen
 
 int sensing_get_sensors(int *sensor_nums, const struct sensing_sensor_info **info)
 {
-	int i = 0;
-
 	__ASSERT(info, "sensing get sensors, sensor info not be NULL");
 
 	*sensor_nums = SENSING_SENSOR_NUM;
-	STRUCT_SECTION_FOREACH(sensing_dt_info, dt_info) {
-		info[i++] = &dt_info->info;
-	}
+	STRUCT_SECTION_GET(sensing_sensor_info, 0, info);
 
 	return 0;
 }

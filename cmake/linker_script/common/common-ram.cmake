@@ -22,6 +22,7 @@ if(CONFIG_PM_DEVICE)
 endif()
 
 if(CONFIG_SENSING)
+  zephyr_iterable_section(NAME sensing_sensor_info GROUP DATA_REGION ${XIP_ALIGN_WITH_INPUT} SUBALIGN 4)
   zephyr_iterable_section(NAME sensing_dt_info GROUP DATA_REGION ${XIP_ALIGN_WITH_INPUT} SUBALIGN 4)
 endif()
 

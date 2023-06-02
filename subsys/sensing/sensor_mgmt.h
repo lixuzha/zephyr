@@ -28,21 +28,31 @@ extern "C" {
 			prop)						\
 }
 
+#define SENSING_SENSOR_INFO_NAME(node)					\
+	_CONCAT(__sensing_sensor_info_, DEVICE_DT_NAME_GET(node))
+
+#define SENSING_SENSOR_INFO_DEFINE(node)					\
+	static STRUCT_SECTION_ITERABLE(sensing_sensor_info,		\
+			SENSING_SENSOR_INFO_NAME(node)) = {		\
+		.type = DT_PROP(node, sensor_type),			\
+		.name = DT_NODE_FULL_NAME(node),			\
+		.friendly_name = DT_PROP(node, friendly_name),		\
+		.vendor = DT_NODE_VENDOR_OR(node, NULL),		\
+		.model = DT_NODE_MODEL_OR(node, NULL),			\
+		.minimal_interval = DT_PROP(node, minimal_interval),	\
+	};
+
 #define SENSING_DT_INFO_NAME(node)					\
 	_CONCAT(__sensing_dt_info_, DEVICE_DT_NAME_GET(node))
 
-#define SENSING_DT_INFO_DEFINE(node)							\
-	static STRUCT_SECTION_ITERABLE(sensing_dt_info, SENSING_DT_INFO_NAME(node)) = {	\
-			.dev = DEVICE_DT_GET(node),					\
-			.info.type = DT_PROP(node, sensor_type),			\
-			.info.name = DT_NODE_FULL_NAME(node),				\
-			.info.friendly_name = DT_PROP(node, friendly_name),		\
-			.info.vendor = DT_NODE_VENDOR_OR(node, NULL),			\
-			.info.model = DT_NODE_MODEL_OR(node, NULL),			\
-			.info.minimal_interval = DT_PROP(node, minimal_interval),	\
-			.reporter_num = DT_PROP_LEN_OR(node, reporters, 0),		\
-			.reporters = PHANDLE_DEVICE_LIST(node, reporters),		\
-		};
+#define SENSING_DT_INFO_DEFINE(node)					\
+	static const STRUCT_SECTION_ITERABLE(sensing_dt_info,		\
+			SENSING_DT_INFO_NAME(node)) = {			\
+		.dev = DEVICE_DT_GET(node),				\
+		.info = &SENSING_SENSOR_INFO_NAME(node),		\
+		.reporter_num = DT_PROP_LEN_OR(node, reporters, 0),	\
+		.reporters = PHANDLE_DEVICE_LIST(node, reporters),	\
+	};
 
 #define for_each_sensor(ctx, i, sensor)					\
 	for (i = 0; i < ctx->sensor_num && (sensor = ctx->sensors[i]) != NULL; i++)
@@ -58,7 +68,7 @@ enum sensor_trigger_mode {
  */
 struct sensing_dt_info {
 	const struct device *dev;
-	struct sensing_sensor_info info;
+	struct sensing_sensor_info *info;
 	uint16_t reporter_num;
 	const struct device *reporters[];
 };
@@ -149,7 +159,7 @@ static inline const struct sensing_sensor_info *get_sensor_info(struct sensing_c
 
 	__ASSERT(conn->source, "get sensor info, sensing_sensor is NULL");
 
-	return &conn->source->dt->info;
+	return conn->source->dt->info;
 }
 
 /**

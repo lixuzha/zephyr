@@ -7,10 +7,37 @@
 #include <zephyr/sensing/sensing.h>
 #include <zephyr/sensing/sensing_sensor.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include "sensor_mgmt.h"
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(sensing, CONFIG_SENSING_LOG_LEVEL);
+
+/* Get sensing_dt_info from sensing_sensor_info */
+static struct sensing_dt_info *sensing_sensor_info_to_dt_info(
+		const struct sensing_sensor_info *sensor_info)
+{
+	struct sensing_sensor_info *first_sensor_info;
+	struct sensing_dt_info *dt_info;
+	int number = 0;
+	int index;
+
+	STRUCT_SECTION_GET(sensing_sensor_info, 0, &first_sensor_info);
+	STRUCT_SECTION_COUNT(sensing_sensor_info, &number);
+
+	if (first_sensor_info > sensor_info) {
+		return NULL;
+	}
+
+	index = sensor_info - first_sensor_info;
+	if (index >= number) {
+		return NULL;
+	}
+
+	STRUCT_SECTION_GET(sensing_dt_info, index, &dt_info);
+
+	return dt_info;
+}
 
 /* sensing_open_sensor is normally called by applications: hid, chre, zephyr main, etc */
 int sensing_open_sensor(const struct sensing_sensor_info *sensor_info,
@@ -19,7 +46,8 @@ int sensing_open_sensor(const struct sensing_sensor_info *sensor_info,
 {
 	int ret = 0;
 	struct sensing_sensor *sensor;
-	struct sensing_dt_info *dt_info = CONTAINER_OF(sensor_info, struct sensing_dt_info, info);
+	struct sensing_dt_info *dt_info = sensing_sensor_info_to_dt_info(
+			sensor_info);
 
 	__ASSERT(handle, "invalid handle");
 

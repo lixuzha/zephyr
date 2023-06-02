@@ -12,21 +12,6 @@
 
 LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 
-#define DT_DRV_COMPAT zephyr_sensing
-
-#define DT_SENSOR_TYPE(node)				\
-	{							\
-		.type = DT_PROP(node, sensor_type),		\
-	},							\
-
-struct sensor_type {
-	int32_t type;
-};
-
-static struct sensor_type sensors[] = {
-	DT_FOREACH_CHILD_STATUS_OKAY(DT_DRV_INST(0), DT_SENSOR_TYPE)
-};
-
 static void acc_data_event_callback(sensing_sensor_handle_t handle, const void *buf, int size)
 {
 	const struct sensing_sensor_info *info = sensing_get_sensor_info(handle);
@@ -49,12 +34,12 @@ void main(void)
 	const struct sensing_callback_list lid_acc_cb_list = {
 		.on_data_event = &acc_data_event_callback,
 	};
-	const struct sensing_sensor_info *info[ARRAY_SIZE(sensors)];
+	const struct sensing_sensor_info *info;
 	sensing_sensor_handle_t base_acc;
 	sensing_sensor_handle_t lid_acc;
 	int ret, i, num = 0;
 
-	ret = sensing_get_sensors(&num, info);
+	ret = sensing_get_sensors(&num, &info);
 	if (ret) {
 		LOG_ERR("sensing_get_sensors error");
 		return;
@@ -62,15 +47,15 @@ void main(void)
 
 	for (i = 0; i < num; ++i) {
 		LOG_INF("Sensor %d: name: %s friendly_name: %s type: %d",
-			 i,
-			 info[i]->name,
-			 info[i]->friendly_name,
-			 info[i]->type);
+				i,
+				info[i].name,
+				info[i].friendly_name,
+				info[i].type);
 	}
 
 	LOG_INF("sensing subsystem run successfully");
 
-	ret = sensing_open_sensor(info[0], &base_acc_cb_list, &base_acc);
+	ret = sensing_open_sensor(&info[0], &base_acc_cb_list, &base_acc);
 	if (ret) {
 		LOG_ERR("sensing_open_sensor, type:0x%x index:0 error:%d",
 			SENSING_SENSOR_TYPE_MOTION_ACCELEROMETER_3D, ret);

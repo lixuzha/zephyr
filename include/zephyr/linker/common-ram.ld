@@ -43,6 +43,7 @@
 #endif
 
 #if CONFIG_SENSING
+	ITERABLE_SECTION_RAM(sensing_sensor_info, 4)
 	ITERABLE_SECTION_RAM(sensing_dt_info, 4)
 #endif
 
