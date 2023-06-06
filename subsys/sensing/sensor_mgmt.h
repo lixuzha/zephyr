@@ -42,12 +42,12 @@ extern "C" {
 		.minimal_interval = DT_PROP(node, minimal_interval),		\
 	};
 
-#define SENSING_DT_INFO_NAME(node)						\
-	_CONCAT(__sensing_dt_info_, DEVICE_DT_NAME_GET(node))
+#define SENSING_SENSOR_NAME(node)						\
+	_CONCAT(__sensing_sensor_, DEVICE_DT_NAME_GET(node))
 
-#define SENSING_DT_INFO_DEFINE(node)						\
-	static STRUCT_SECTION_ITERABLE(sensing_dt_info,				\
-				       SENSING_DT_INFO_NAME(node)) = {		\
+#define SENSING_SENSOR_DEFINE(node)						\
+	static STRUCT_SECTION_ITERABLE(sensing_sensor,				\
+				       SENSING_SENSOR_NAME(node)) = {		\
 		.dev = DEVICE_DT_GET(node),					\
 		.info = &SENSING_SENSOR_INFO_NAME(node),			\
 		.reporter_num = DT_PROP_LEN_OR(node, reporters, 0),		\
@@ -60,17 +60,6 @@ extern "C" {
 enum sensor_trigger_mode {
 	SENSOR_TRIGGER_MODE_POLLING = 1,
 	SENSOR_TRIGGER_MODE_DATA_READY = 2,
-};
-
-/**
- * @struct sensing_dt_info
- * @brief Sensor device tree data structure
- */
-struct sensing_dt_info {
-	const struct device *dev;
-	struct sensing_sensor_info *info;
-	uint16_t reporter_num;
-	const struct device *reporters[];
 };
 
 /**
@@ -102,8 +91,9 @@ struct sensing_connection {
  * build report relationship model base on them, etc.
  */
 struct sensing_sensor {
-	struct sensing_dt_info *dt;
-	struct sensing_connection *conns;
+	const struct device *dev;
+	struct sensing_sensor_info *info;
+	uint16_t reporter_num;
 	sys_slist_t client_list;
 	uint32_t interval;
 	uint8_t sensitivity_count;
@@ -113,6 +103,8 @@ struct sensing_sensor {
 	/* runtime info */
 	uint16_t sample_size;
 	void *data_buf;
+	struct sensing_connection *conns;
+	const struct device *reporters[];
 };
 
 int open_sensor(struct sensing_sensor *sensor, sensing_sensor_handle_t *handle);
@@ -127,15 +119,14 @@ int get_sensitivity(struct sensing_connection *con, int8_t index, uint32_t *sens
 
 static inline bool is_phy_sensor(struct sensing_sensor *sensor)
 {
-	return sensor->dt->reporter_num == 0;
+	return sensor->reporter_num == 0;
 }
 
-static inline uint16_t get_sensor_sample_size_from_dt(const struct sensing_dt_info *dt, int i)
+static inline uint16_t get_reporter_sample_size(const struct sensing_sensor *sensor, int i)
 {
-	__ASSERT(dt, "device tree info is invalid");
-	__ASSERT(i < dt->reporter_num, "dt index should less than reporter num");
+	__ASSERT(i < sensor->reporter_num, "dt index should less than reporter num");
 
-	return ((struct sensing_sensor_ctx *)dt->reporters[i]->data)->register_info->sample_size;
+	return ((struct sensing_sensor_ctx *)sensor->reporters[i]->data)->register_info->sample_size;
 }
 
 static inline struct sensing_sensor *get_sensor_by_dev(const struct device *dev)
@@ -146,11 +137,11 @@ static inline struct sensing_sensor *get_sensor_by_dev(const struct device *dev)
 
 static inline struct sensing_sensor *get_reporter_sensor(struct sensing_sensor *sensor, int index)
 {
-	if (!sensor || index >= sensor->dt->reporter_num) {
+	if (!sensor || index >= sensor->reporter_num) {
 		return NULL;
 	}
 
-	return get_sensor_by_dev(sensor->dt->reporters[index]);
+	return get_sensor_by_dev(sensor->reporters[index]);
 }
 
 static inline const struct sensing_sensor_info *get_sensor_info(struct sensing_connection *conn)
@@ -159,7 +150,7 @@ static inline const struct sensing_sensor_info *get_sensor_info(struct sensing_c
 
 	__ASSERT(conn->source, "get sensor info, sensing_sensor is NULL");
 
-	return conn->source->dt->info;
+	return conn->source->info;
 }
 
 /**

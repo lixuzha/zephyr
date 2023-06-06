@@ -12,17 +12,17 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(sensing, CONFIG_SENSING_LOG_LEVEL);
 
-static struct sensing_dt_info *sensing_sensor_info_to_dt_info(
+static struct sensing_sensor *sensing_sensor_info_to_sensor(
 				const struct sensing_sensor_info *sensor_info)
 {
-	struct sensing_dt_info *dt_info;
+	struct sensing_sensor *sensor;
 	int index = 0;
 	int number;
 
 	STRUCT_SECTION_COUNT(sensing_sensor_info, &number);
 
-	STRUCT_SECTION_FOREACH(sensing_sensor_info, tmp_sensor) {
-		if (sensor_info != tmp_sensor) {
+	STRUCT_SECTION_FOREACH(sensing_sensor_info, tmp_info) {
+		if (sensor_info != tmp_info) {
 			index++;
 			continue;
 		} else {
@@ -32,9 +32,9 @@ static struct sensing_dt_info *sensing_sensor_info_to_dt_info(
 	if (index >= number)
 		return NULL;
 
-	STRUCT_SECTION_GET(sensing_dt_info, index, &dt_info);
+	STRUCT_SECTION_GET(sensing_sensor, index, &sensor);
 
-	return dt_info;
+	return sensor;
 }
 
 /* sensing_open_sensor is normally called by applications: hid, chre, zephyr main, etc */
@@ -43,14 +43,9 @@ int sensing_open_sensor(const struct sensing_sensor_info *sensor_info,
 			sensing_sensor_handle_t *handle)
 {
 	int ret = 0;
-	struct sensing_sensor *sensor;
-	struct sensing_dt_info *dt_info = sensing_sensor_info_to_dt_info(sensor_info);
+	struct sensing_sensor *sensor = sensing_sensor_info_to_sensor(sensor_info);
 
 	__ASSERT(handle, "invalid handle");
-
-	__ASSERT(dt_info, "invalid sensing_dt_info");
-
-	sensor = get_sensor_by_dev(dt_info->dev);
 
 	ret = open_sensor(sensor, handle);
 	if (ret) {

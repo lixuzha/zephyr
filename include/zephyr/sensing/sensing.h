@@ -131,16 +131,10 @@ struct sensing_sensor_info {
 	const char *model;
 
 	/** Sensor type */
-	int32_t type;
-
-	/** Sensor flags */
-	uint32_t flags;
+	const int32_t type;
 
 	/** Minimal report interval in micro seconds */
-	uint32_t minimal_interval;
-
-	/** Sensor version */
-	struct sensing_sensor_version version;
+	const uint32_t minimal_interval;
 };
 
 /**

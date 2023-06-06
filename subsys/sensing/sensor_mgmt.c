@@ -21,7 +21,7 @@
 LOG_MODULE_REGISTER(sensing, CONFIG_SENSING_LOG_LEVEL);
 
 DT_FOREACH_CHILD_STATUS_OKAY(DT_DRV_INST(0), SENSING_SENSOR_INFO_DEFINE)
-DT_FOREACH_CHILD_STATUS_OKAY(DT_DRV_INST(0), SENSING_DT_INFO_DEFINE)
+DT_FOREACH_CHILD_STATUS_OKAY(DT_DRV_INST(0), SENSING_SENSOR_DEFINE)
 
 
 /**
@@ -69,8 +69,8 @@ static int init_sensor(struct sensing_sensor *sensor, int conns_num)
 	void *tmp_conns[conns_num];
 	int i;
 
-	__ASSERT(sensor && sensor->dt->dev, "init sensor, sensor or sensor device is NULL");
-	sensor_api = sensor->dt->dev->api;
+	__ASSERT(sensor && sensor->dev, "init sensor, sensor or sensor device is NULL");
+	sensor_api = sensor->dev->api;
 	__ASSERT(sensor_api, "init sensor, sensor device sensor_api is NULL");
 
 	/* physical sensor has no reporters, conns_num is 0 */
@@ -86,7 +86,7 @@ static int init_sensor(struct sensing_sensor *sensor, int conns_num)
 		init_connection(conn, reporter, sensor);
 
 		LOG_DBG("init sensor, reporter:%s, client:%s, connection:%d",
-			reporter->dt->dev->name, sensor->dt->dev->name, i);
+			reporter->dev->name, sensor->dev->name, i);
 
 		tmp_conns[i] = conn;
 	}
@@ -98,71 +98,64 @@ static int init_sensor(struct sensing_sensor *sensor, int conns_num)
 		sensor->mode = SENSOR_TRIGGER_MODE_POLLING;
 	}
 
-	return sensor_api->init(sensor->dt->dev, sensor->dt->info, tmp_conns, conns_num);
+	return sensor_api->init(sensor->dev, sensor->info, tmp_conns, conns_num);
 }
 
 /* create struct sensing_sensor *sensor according to sensor device tree */
-static struct sensing_sensor *create_sensor(struct sensing_dt_info *dt)
+static int pre_init_sensor(struct sensing_sensor *sensor)
 {
 	struct sensing_sensor_ctx *sensor_ctx;
-	struct sensing_sensor *sensor;
 	uint16_t sample_size, total_size;
 	uint16_t conn_sample_size = 0;
 	uint16_t i = 0;
 	void *tmp_data;
 
-	__ASSERT(dt && dt->dev, "device tree info or sensing dev is invalid");
-	sensor_ctx = dt->dev->data;
+	sensor_ctx = sensor->dev->data;
 	__ASSERT(sensor_ctx, "sensing sensor context is invalid");
 
 	sample_size = sensor_ctx->register_info->sample_size;
-	for (i = 0; i < dt->reporter_num; i++) {
-		conn_sample_size += get_sensor_sample_size_from_dt(dt, i);
+	for (i = 0; i < sensor->reporter_num; i++) {
+		conn_sample_size += get_reporter_sample_size(sensor, i);
 	}
 
 	/* total memory to be allocated for a sensor according to sensor device tree:
-	 * 1) size of struct sensing_sensor *
-	 * 2) sample data point to struct sensing_sensor->data_buf
-	 * 3) size of struct sensing_connection* for sensor connection to its reporter
-	 * 4) reporter sample size to be stored in connection data
+	 * 1) sample data point to struct sensing_sensor->data_buf
+	 * 2) size of struct sensing_connection* for sensor connection to its reporter
+	 * 3) reporter sample size to be stored in connection data
 	 */
-	total_size = sizeof(*sensor) + sample_size +
-		     dt->reporter_num * sizeof(*sensor->conns) + conn_sample_size;
+	total_size = sample_size + sensor->reporter_num * sizeof(*sensor->conns) +
+		conn_sample_size;
 
 	/* total size for different sensor maybe different, for example:
 	 * there's no reporter for physical sensor, so no connection memory is needed
 	 * reporter num of each virtual sensor may also different, so connection memory is also
 	 * varied, so here malloc is a must for different sensor.
 	 */
-	sensor = malloc(total_size);
-	if (!sensor) {
-		LOG_ERR("malloc memory for struct sensing_sensor error");
-		return NULL;
+	tmp_data = malloc(total_size);
+	if (!tmp_data) {
+		LOG_ERR("malloc memory for sensing_sensor error");
+		return -ENOMEM;
 	}
 	sensor->sample_size = sample_size;
-	sensor->data_buf = (uint8_t *)sensor + sizeof(*sensor);
+	sensor->data_buf = tmp_data;
 	sensor->conns = (struct sensing_connection *)((uint8_t *)sensor->data_buf + sample_size);
 
-	tmp_data = sensor->conns + dt->reporter_num;
-	for (i = 0; i < dt->reporter_num; i++) {
+	tmp_data = sensor->conns + sensor->reporter_num;
+	for (i = 0; i < sensor->reporter_num; i++) {
 		sensor->conns[i].data = tmp_data;
-		tmp_data = (uint8_t *)tmp_data + get_sensor_sample_size_from_dt(dt, i);
+		tmp_data = (uint8_t *)tmp_data + get_reporter_sample_size(sensor, i);
 	}
 
-	__ASSERT(tmp_data == ((uint8_t *)sensor + total_size), "sensor memory assign error");
-
-	sensor->dt = dt;
-	sensor->dt->info->flags = sensor_ctx->register_info->flags;
-	sensor->dt->info->version = sensor_ctx->register_info->version;
+	__ASSERT(tmp_data == ((uint8_t *)sensor->data_buf + total_size), "sensor memory assign error");
 
 	LOG_INF("create sensor, sensor:%s, min_ri:%d(us)",
-		sensor->dt->dev->name, sensor->dt->info->minimal_interval);
+			sensor->dev->name, sensor->info->minimal_interval);
 
 	sensor->interval = 0;
 	sensor->sensitivity_count = sensor_ctx->register_info->sensitivity_count;
 	__ASSERT(sensor->sensitivity_count <= CONFIG_SENSING_MAX_SENSITIVITY_COUNT,
-		 "sensitivity count:%d should not exceed MAX_SENSITIVITY_COUNT",
-		 sensor->sensitivity_count);
+			"sensitivity count:%d should not exceed MAX_SENSITIVITY_COUNT",
+			sensor->sensitivity_count);
 	memset(sensor->sensitivity, 0x00, sizeof(sensor->sensitivity));
 
 	sensor->state = SENSING_SENSOR_STATE_OFFLINE;
@@ -170,7 +163,7 @@ static struct sensing_sensor *create_sensor(struct sensing_dt_info *dt)
 
 	sensor_ctx->priv_ptr = sensor;
 
-	return sensor;
+	return 0;
 }
 
 static int sensing_init(void)
@@ -193,26 +186,26 @@ static int sensing_init(void)
 		return 0;
 	}
 
-	STRUCT_SECTION_FOREACH(sensing_dt_info, dt_info) {
-		sensor = create_sensor(dt_info);
-		if (!sensor) {
+	STRUCT_SECTION_FOREACH(sensing_sensor, snr) {
+		ret = pre_init_sensor(snr);
+		if (ret) {
 			LOG_ERR("sensing init, create sensor error");
 			return -EINVAL;
 		}
-		ctx->sensors[i++] = sensor;
+		ctx->sensors[i++] = snr;
 	}
 
 	for_each_sensor(ctx, i, sensor) {
-		ret = init_sensor(sensor, sensor->dt->reporter_num);
+		ret = init_sensor(sensor, sensor->reporter_num);
 		if (ret) {
-			LOG_ERR("sensor:%s initial error", sensor->dt->dev->name);
+			LOG_ERR("sensor:%s initial error", sensor->dev->name);
 		}
 		state = (ret ? SENSING_SENSOR_STATE_OFFLINE : SENSING_SENSOR_STATE_READY);
 		ret = set_sensor_state(sensor, state);
 		if (ret) {
-			LOG_ERR("set sensor:%s state:%d error", sensor->dt->dev->name, state);
+			LOG_ERR("set sensor:%s state:%d error", sensor->dev->name, state);
 		}
-		LOG_INF("sensing init, sensor:%s ret:%d", sensor->dt->dev->name, ret);
+		LOG_INF("sensing init, sensor:%s ret:%d", sensor->dev->name, ret);
 	}
 
 	return ret;
