@@ -13,42 +13,35 @@
 
 LOG_MODULE_DECLARE(sensing, CONFIG_SENSING_LOG_LEVEL);
 
-int sensing_sensor_notify_data_ready(const struct device *dev)
+int sensing_sensor_get_reporters(const struct device *dev, int type,
+		sensing_sensor_handle_t *reporter_handles,
+		int max_handles)
 {
 	struct sensing_sensor *sensor = get_sensor_by_dev(dev);
-	struct sensing_context *ctx = get_sensing_ctx();
+	int i, num = 0;
 
-	__ASSERT(sensor, "sensing sensor notify data ready, sensing_sensor is NULL");
-
-	LOG_INF("sensor:%s notify data ready, sensor_mode:%d", sensor->dev->name, sensor->mode);
-
-	if (sensor->mode != SENSOR_TRIGGER_MODE_DATA_READY) {
-		LOG_ERR("sensor:%s not in data ready mode", sensor->dev->name);
-		return -EINVAL;
+	for (i = 0; i < sensor->reporter_num && num < max_handles; ++i) {
+		if (type == sensor->conns[i].source->info->type
+				|| type == SENSING_SENSOR_TYPE_ALL) {
+			reporter_handles[num] = &sensor->conns[i];
+			num++;
+		}
 	}
 
-	atomic_set_bit(&sensor->flag, SENSOR_DATA_READY_BIT);
-
-	atomic_set_bit(&ctx->event_flag, EVENT_DATA_READY);
-	k_sem_give(&ctx->event_sem);
-
-	return 0;
+	return num;
 }
 
-int sensing_sensor_set_data_ready(const struct device *dev, bool data_ready)
+int sensing_sensor_get_reporters_count(const struct device *dev, int type)
 {
 	struct sensing_sensor *sensor = get_sensor_by_dev(dev);
+	int i, num = 0;
 
-	__ASSERT(sensor, "sensing sensor set data ready, sensing_sensor is NULL");
+	for (i = 0; i < sensor->reporter_num; ++i) {
+		if (type == sensor->conns[i].source->info->type
+				|| type == SENSING_SENSOR_TYPE_ALL) {
+			num++;
+		}
+	}
 
-	sensor->mode = data_ready ? SENSOR_TRIGGER_MODE_DATA_READY : SENSOR_TRIGGER_MODE_POLLING;
-	LOG_INF("set data ready, sensor:%s, data_ready:%d, trigger_mode:%d",
-		sensor->dev->name, data_ready, sensor->mode);
-
-	return 0;
-}
-
-int sensing_sensor_post_data(const struct device *dev, void *buf, int size)
-{
-	return -ENOTSUP;
+	return num;
 }

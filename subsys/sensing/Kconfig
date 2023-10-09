@@ -5,7 +5,9 @@ config SENSING
 	bool "Sensing Subsystem"
 	default y
 	depends on DT_HAS_ZEPHYR_SENSING_ENABLED
-	select RING_BUFFER
+	select RTIO
+	select RTIO_CONSUME_SEM
+	select SENSOR_ASYNC_API
 	help
 	  Enable Sensing Subsystem.
 
@@ -14,6 +16,15 @@ if SENSING
 module = SENSING
 module-str = sensing
 source "subsys/logging/Kconfig.template.log_config"
+
+
+config SENSING_RTIO_BLOCK_SIZE
+	int "Block size of the RTIO context"
+	default 64
+
+config SENSING_RTIO_BLOCK_COUNT
+	int "Number of memory blocks of the RTIO context"
+	default 32
 
 config SENSING_MAX_SENSITIVITY_COUNT
 	int "maximum sensitivity count one sensor could support"
@@ -63,7 +74,7 @@ config SENSING_DISPATCH_THREAD_STACK_SIZE
 config SENSING_RUNTIME_THREAD_PRIORITY
 	int "priority for sensing subsystem runtime thread"
 	depends on SENSING
-	default 9
+	default 7
 	help
 	  This is the thread priority for sensor subsystem runtime thread
 	  Ring buffer data is stored by runtime thread, and then give semaphore

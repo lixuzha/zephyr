@@ -18,44 +18,6 @@
 extern "C" {
 #endif
 
-#define PHANDLE_DEVICE_BY_IDX(idx, node, prop)					\
-	DEVICE_DT_GET(DT_PHANDLE_BY_IDX(node, prop, idx))
-
-#define PHANDLE_DEVICE_LIST(node, prop)						\
-{										\
-	LISTIFY(DT_PROP_LEN_OR(node, prop, 0),					\
-			PHANDLE_DEVICE_BY_IDX,					\
-			(,),							\
-			node,							\
-			prop)							\
-}
-
-#define SENSING_SENSOR_INFO_NAME(node)						\
-	_CONCAT(__sensing_sensor_info_, DEVICE_DT_NAME_GET(node))
-
-#define SENSING_SENSOR_INFO_DEFINE(node)					\
-	const static STRUCT_SECTION_ITERABLE(sensing_sensor_info,			\
-				       SENSING_SENSOR_INFO_NAME(node)) = {	\
-		.type = DT_PROP(node, sensor_type),				\
-		.name = DT_NODE_FULL_NAME(node),				\
-		.friendly_name = DT_PROP(node, friendly_name),			\
-		.vendor = DT_NODE_VENDOR_OR(node, NULL),			\
-		.model = DT_NODE_MODEL_OR(node, NULL),				\
-		.minimal_interval = DT_PROP(node, minimal_interval),		\
-	};
-
-#define SENSING_SENSOR_NAME(node)						\
-	_CONCAT(__sensing_sensor_, DEVICE_DT_NAME_GET(node))
-
-#define SENSING_SENSOR_DEFINE(node)						\
-	static STRUCT_SECTION_ITERABLE(sensing_sensor,				\
-				       SENSING_SENSOR_NAME(node)) = {		\
-		.dev = DEVICE_DT_GET(node),					\
-		.info = &SENSING_SENSOR_INFO_NAME(node),			\
-		.reporter_num = DT_PROP_LEN_OR(node, reporters, 0),		\
-		.reporters = PHANDLE_DEVICE_LIST(node, reporters),		\
-	};
-
 #define for_each_sensor(ctx, i, sensor)						\
 	for (i = 0; i < ctx->sensor_num && (sensor = ctx->sensors[i]) != NULL; i++)
 
@@ -68,71 +30,7 @@ extern "C" {
 #define EXEC_TIME_INIT 0
 #define EXEC_TIME_OFF UINT64_MAX
 
-enum sensor_trigger_mode {
-	SENSOR_TRIGGER_MODE_POLLING = 1,
-	SENSOR_TRIGGER_MODE_DATA_READY = 2,
-};
-
-enum {
-	EVENT_CONFIG_READY,
-	EVENT_DATA_READY,
-};
-
-enum {
-	SENSOR_LATER_CFG_BIT,
-	SENSOR_DATA_READY_BIT,
-};
-
-/**
- * @struct sensing_connection information
- * @brief sensing_connection indicates connection from reporter(source) to client(sink)
- */
-struct sensing_connection {
-	struct sensing_sensor *source;
-	struct sensing_sensor *sink;
-	/* interval and sensitivity set from client(sink) to reporter(source) */
-	uint32_t interval;
-	int sensitivity[CONFIG_SENSING_MAX_SENSITIVITY_COUNT];
-	/* copy sensor data to connection data buf from reporter */
-	void *data;
-	/* client(sink) next consume time */
-	uint64_t next_consume_time;
-	/* when new data arrive, set flag to true, after data processing, clear the flag */
-	bool new_data_arrive;
-	sys_snode_t snode;
-	/* post data to application */
-	sensing_data_event_t data_evt_cb;
-};
-
-/**
- * @struct sensing_sensor
- * @brief Internal sensor instance data structure.
- *
- * Each sensor instance will have its unique data structure for storing all
- * it's related information.
- *
- * Sensor management will enumerate all these instance data structures,
- * build report relationship model base on them, etc.
- */
-struct sensing_sensor {
-	const struct device *dev;
-	const struct sensing_sensor_info *info;
-	const uint16_t reporter_num;
-	sys_slist_t client_list;
-	uint32_t interval;
-	uint8_t sensitivity_count;
-	int sensitivity[CONFIG_SENSING_MAX_SENSITIVITY_COUNT];
-	enum sensing_sensor_state state;
-	enum sensor_trigger_mode mode;
-	/* runtime info */
-	atomic_t flag;
-	uint64_t next_exec_time;
-	uint16_t sample_size;
-	void *data_buf;
-	struct sensing_connection *conns;
-	const struct device *reporters[];
-};
-
+extern struct rtio sensing_rtio_ctx;
 /**
  * @struct sensing_context
  * @brief sensing subsystem context to include global variables
@@ -141,16 +39,8 @@ struct sensing_context {
 	bool sensing_initialized;
 	int sensor_num;
 	struct sensing_sensor **sensors;
-	struct k_thread runtime_thread;
-	struct k_thread dispatch_thread;
-	k_tid_t runtime_id;
-	k_tid_t dispatch_id;
 	struct k_sem event_sem;
-	struct k_sem dispatch_sem;
 	atomic_t event_flag;
-	bool data_to_ring_buf;
-	struct ring_buf sensor_ring_buf;
-	uint8_t buf[CONFIG_SENSING_RING_BUF_SIZE];
 };
 
 int open_sensor(struct sensing_sensor *sensor, struct sensing_connection **conn);
@@ -161,28 +51,29 @@ int set_interval(struct sensing_connection *conn, uint32_t interval);
 int get_interval(struct sensing_connection *con, uint32_t *sensitivity);
 int set_sensitivity(struct sensing_connection *conn, int8_t index, uint32_t interval);
 int get_sensitivity(struct sensing_connection *con, int8_t index, uint32_t *sensitivity);
-int loop_sensors(struct sensing_context *ctx);
-void sensing_dispatch_thread(void *p1, void *p2, void *p3);
-struct sensing_context *get_sensing_ctx(void);
 
-
-static inline bool is_phy_sensor(struct sensing_sensor *sensor)
+static inline struct sensing_sensor *get_sensor_by_dev(const struct device *dev)
 {
-	return sensor->reporter_num == 0;
+	STRUCT_SECTION_FOREACH(sensing_sensor, sensor) {
+		if (sensor->dev == dev) {
+			return sensor;
+		}
+	}
+
+	__ASSERT(true, "device %s is not a sensing sensor", dev->name);
+
+	return NULL;
 }
 
 static inline uint16_t get_reporter_sample_size(const struct sensing_sensor *sensor, int i)
 {
+	const struct sensing_sensor *reporter;
+
 	__ASSERT(i < sensor->reporter_num, "dt index should less than reporter num");
 
-	return ((struct sensing_sensor_ctx *)
-		sensor->reporters[i]->data)->register_info->sample_size;
-}
+	reporter = get_sensor_by_dev(sensor->reporters[i]);
 
-static inline struct sensing_sensor *get_sensor_by_dev(const struct device *dev)
-{
-	return dev ?
-		(struct sensing_sensor *)((struct sensing_sensor_ctx *)dev->data)->priv_ptr : NULL;
+	return reporter->register_info->sample_size;
 }
 
 static inline struct sensing_sensor *get_reporter_sensor(struct sensing_sensor *sensor, int index)
@@ -211,38 +102,12 @@ static inline bool is_client_request_data(struct sensing_connection *conn)
 
 static inline uint64_t get_us(void)
 {
-	return k_cycle_get_64() * USEC_PER_SEC / CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC;
-}
-
-static inline bool is_sensor_opened(struct sensing_sensor *sensor)
-{
-	return sensor->interval != 0;
+	return k_ticks_to_us_floor64(k_uptime_ticks());
 }
 
 static inline bool is_sensor_state_ready(struct sensing_sensor *sensor)
 {
 	return (sensor->state == SENSING_SENSOR_STATE_READY);
-}
-
-/* sensor not in polling mode, meanwhile data ready arrived from physical sensor */
-static inline bool is_sensor_data_ready(struct sensing_sensor *sensor)
-{
-	return is_phy_sensor(sensor) &&
-	       sensor->mode == SENSOR_TRIGGER_MODE_DATA_READY &&
-	       atomic_test_and_clear_bit(&sensor->flag, SENSOR_DATA_READY_BIT);
-}
-
-/* when reporter post data to its client, new_data_arrive flag will be set,
- * indicates sensor has new data arriving
- */
-static inline bool sensor_has_new_data(const struct sensing_sensor *sensor)
-{
-	for (int i = 0; i < sensor->reporter_num; i++) {
-		if (sensor->conns[i].new_data_arrive)
-			return true;
-	}
-
-	return false;
 }
 
 /* this function is used to decide whether filtering sensitivity checking
@@ -263,11 +128,6 @@ static inline bool is_filtering_sensitivity(int *sensitivity)
 	return filtering;
 }
 
-static inline k_timeout_t calc_timeout(int sleep_time)
-{
-	return (sleep_time == UINT32_MAX ? K_FOREVER : K_MSEC(sleep_time));
-}
-
 /**
  * @}
  */
@@ -275,6 +135,5 @@ static inline k_timeout_t calc_timeout(int sleep_time)
 #ifdef __cplusplus
 }
 #endif
-
 
 #endif /* SENSOR_MGMT_H_ */

@@ -5,8 +5,10 @@
  */
 #include <zephyr/sys/__assert.h>
 #include <zephyr/devicetree.h>
+#include <zephyr/drivers/sensor.h>
 #include <zephyr/init.h>
 #include <zephyr/kernel.h>
+#include <zephyr/rtio/rtio.h>
 #include <zephyr/sensing/sensing.h>
 #include <zephyr/logging/log.h>
 #include <stdlib.h>
@@ -22,19 +24,15 @@ BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1,
 
 LOG_MODULE_REGISTER(sensing, CONFIG_SENSING_LOG_LEVEL);
 
-DT_FOREACH_CHILD_STATUS_OKAY(DT_DRV_INST(0), SENSING_SENSOR_INFO_DEFINE)
-DT_FOREACH_CHILD_STATUS_OKAY(DT_DRV_INST(0), SENSING_SENSOR_DEFINE)
-
-K_THREAD_STACK_DEFINE(runtime_stack, CONFIG_SENSING_RUNTIME_THREAD_STACK_SIZE);
-K_THREAD_STACK_DEFINE(dispatch_stack, CONFIG_SENSING_DISPATCH_THREAD_STACK_SIZE);
-
-
 struct sensing_sensor *sensors[SENSING_SENSOR_NUM];
 
 static struct sensing_context sensing_ctx = {
 	.sensor_num = SENSING_SENSOR_NUM,
 };
 
+RTIO_DEFINE_WITH_MEMPOOL(sensing_rtio_ctx, 32, 32,
+		CONFIG_SENSING_RTIO_BLOCK_COUNT,
+		CONFIG_SENSING_RTIO_BLOCK_SIZE, 4);
 
 /* sensor_later_config including arbitrate/set interval/sensitivity
  */
@@ -60,48 +58,57 @@ static uint32_t arbitrate_interval(struct sensing_sensor *sensor)
 	 */
 	interval = (min_interval == UINT32_MAX ? 0 : min_interval);
 
-	if (interval == 0) {
-		/* sensor is closed by all clients, reset next_exec_time as EXEC_TIME_OFF
-		 * open -> close: next_exec_time = EXEC_TIME_OFF
-		 */
-		sensor->next_exec_time = EXEC_TIME_OFF;
-	} else {
-		/* sensor is still closed last time, set next_exec_time as EXEC_TIME_INIT
-		 * close -> open: next_exec_time = EXEC_TIME_INIT
-		 */
-		if (sensor->next_exec_time == EXEC_TIME_OFF) {
-			sensor->next_exec_time = EXEC_TIME_INIT;
-		}
-	}
-	LOG_DBG("arbitrate interval, sensor:%s, interval:%d(us), next_exec_time:%lld",
-		sensor->dev->name, interval, sensor->next_exec_time);
+	LOG_DBG("arbitrate interval, sensor:%s, interval:%d(us)",
+			sensor->dev->name, interval);
 
 	return interval;
 }
 
 static int set_arbitrate_interval(struct sensing_sensor *sensor, uint32_t interval)
 {
-	const struct sensing_sensor_api *sensor_api;
+	struct sensor_read_config *config = sensor->iodev->data;
+	struct sensor_value odr = {0};
+	int ret;
 
 	__ASSERT(sensor && sensor->dev, "set arbitrate interval, sensor or sensor device is NULL");
-	sensor_api = sensor->dev->api;
-	__ASSERT(sensor_api, "set arbitrate interval, sensor device sensor_api is NULL");
 
-	sensor->interval = interval;
-	/* reset sensor next_exec_time and sample timestamp as soon as sensor interval is changed */
-	sensor->next_exec_time = interval > 0 ? EXEC_TIME_INIT : EXEC_TIME_OFF;
+	LOG_INF("set arbitrate interval:%d, sensor:%s, is_streaming:%d",
+			interval, sensor->dev->name, config->is_streaming);
 
-	LOG_DBG("set arbitrate interval:%d, sensor:%s, next_exec_time:%lld",
-		interval, sensor->dev->name, sensor->next_exec_time);
-
-	((struct sensing_sensor_value_header *)sensor->data_buf)->base_timestamp = 0;
-
-	if (!sensor_api->set_interval) {
-		LOG_ERR("sensor:%s set_interval callback is not set yet", sensor->dev->name);
-		return -ENODEV;
+	if (interval) {
+		odr.val1 = USEC_PER_SEC / interval;
+		odr.val2 = (uint64_t)USEC_PER_SEC * 1000000 / interval % 1000000;
 	}
 
-	return sensor_api->set_interval(sensor->dev, interval);
+	/* The SENSOR_CHAN_MAX should be overridden by sensing sensor driver */
+	ret = sensor_attr_set(sensor->dev, SENSOR_CHAN_MAX,
+			SENSOR_ATTR_SAMPLING_FREQUENCY, &odr);
+	if (ret) {
+		LOG_ERR("%s set attr freq failed:%d", sensor->dev->name, ret);
+		return ret;
+	}
+
+	if (sensor->interval) {
+		if (config->is_streaming) {
+			rtio_sqe_cancel(sensor->stream_sqe);
+		} else {
+			k_timer_stop(&sensor->timer);
+		}
+	}
+
+	if (interval) {
+		if (config->is_streaming) {
+			ret = sensor_stream(sensor->iodev, &sensing_rtio_ctx,
+					sensor, &sensor->stream_sqe);
+		} else {
+			k_timer_start(&sensor->timer, K_USEC(interval),
+					K_USEC(interval));
+		}
+	}
+
+	sensor->interval = interval;
+
+	return ret;
 }
 
 static int config_interval(struct sensing_sensor *sensor)
@@ -141,22 +148,18 @@ static uint32_t arbitrate_sensitivity(struct sensing_sensor *sensor, int index)
 
 static int set_arbitrate_sensitivity(struct sensing_sensor *sensor, int index, uint32_t sensitivity)
 {
-	const struct sensing_sensor_api *sensor_api;
-
+	struct sensor_value threshold = {.val1 = sensitivity};
 	__ASSERT(sensor && sensor->dev, "arbitrate sensitivity, sensor or sensor device is NULL");
-	sensor_api = sensor->dev->api;
-	__ASSERT(sensor_api, "arbitrate sensitivity, sensor device sensor_api is NULL");
 
 	/* update sensor sensitivity */
 	sensor->sensitivity[index] = sensitivity;
 
-	if (!sensor_api->set_sensitivity) {
-		LOG_WRN("sensor:%s set_sensitivity callback is not set", sensor->dev->name);
-		/* sensor driver may not set sensitivity callback, no need to return error here */
-		return 0;
-	}
-
-	return sensor_api->set_sensitivity(sensor->dev, index, sensitivity);
+	/* The SENSOR_CHAN_PRIV_START should be overridden by sensing sensor
+	 * driver, SENSOR_ATTR_HYSTERESIS can be overridden for different
+	 * sensora type.
+	 */
+	return sensor_attr_set(sensor->dev, SENSOR_CHAN_PRIV_START + index,
+			SENSOR_ATTR_HYSTERESIS, &threshold);
 }
 
 static int config_sensitivity(struct sensing_sensor *sensor, int index)
@@ -182,8 +185,8 @@ static int config_sensor(struct sensing_sensor *sensor)
 	for (i = 0; i < sensor->sensitivity_count; i++) {
 		ret = config_sensitivity(sensor, i);
 		if (ret) {
-			LOG_WRN("sensor:%s config sensitivity index:%d error",
-					sensor->dev->name, i);
+			LOG_WRN("sensor:%s config sensitivity index:%d error:%d",
+					sensor->dev->name, i, ret);
 		}
 	}
 
@@ -209,24 +212,16 @@ static void sensor_later_config(struct sensing_context *ctx)
 static void sensing_runtime_thread(void *p1, void *p2, void *p3)
 {
 	struct sensing_context *ctx = p1;
-	int sleep_time = UINT32_MAX;
 	int ret;
 
 	LOG_INF("sensing runtime thread start...");
 
 	do {
-		sleep_time = loop_sensors(ctx);
-
-		LOG_INF("sensing runtime thread, sleep_time:%d(ms)", sleep_time);
-
-		ret = k_sem_take(&ctx->event_sem, calc_timeout(sleep_time));
+		ret = k_sem_take(&ctx->event_sem, K_FOREVER);
 		if (!ret) {
 			if (atomic_test_and_clear_bit(&ctx->event_flag, EVENT_CONFIG_READY)) {
 				LOG_INF("runtime thread triggered by EVENT_CONFIG_READY");
 				sensor_later_config(ctx);
-			}
-			if (atomic_test_and_clear_bit(&ctx->event_flag, EVENT_DATA_READY)) {
-				LOG_INF("runtime thread triggered by EVENT_DATA_READY");
 			}
 		}
 	} while (1);
@@ -272,28 +267,26 @@ static void init_connection(struct sensing_connection *conn,
 	sys_slist_append(&source->client_list, &conn->snode);
 }
 
-static int init_sensor(struct sensing_sensor *sensor, int conns_num)
+static void sensing_sensor_polling_timer(struct k_timer *timer_id)
 {
-	const struct sensing_sensor_api *sensor_api;
+	struct sensing_sensor *sensor = CONTAINER_OF(timer_id,
+			struct sensing_sensor, timer);
+
+	sensor_read(sensor->iodev, &sensing_rtio_ctx, sensor);
+}
+
+static int init_sensor(struct sensing_sensor *sensor)
+{
 	struct sensing_sensor *reporter;
 	struct sensing_connection *conn;
-	void *tmp_conns[conns_num];
 	int i;
 
 	__ASSERT(sensor && sensor->dev, "init sensor, sensor or sensor device is NULL");
-	sensor_api = sensor->dev->api;
-	__ASSERT(sensor_api, "init sensor, sensor device sensor_api is NULL");
 
-	if (sensor->data_buf == NULL) {
-		LOG_ERR("sensor:%s memory alloc failed", sensor->dev->name);
-		return -ENOMEM;
-	}
-	/* physical sensor has no reporters, conns_num is 0 */
-	if (conns_num == 0) {
-		sensor->conns = NULL;
-	}
+	k_timer_init(&sensor->timer, sensing_sensor_polling_timer, NULL);
+	sys_slist_init(&sensor->client_list);
 
-	for (i = 0; i < conns_num; i++) {
+	for (i = 0; i < sensor->reporter_num; i++) {
 		conn = &sensor->conns[i];
 		reporter = get_reporter_sensor(sensor, i);
 		__ASSERT(reporter, "sensor's reporter should not be NULL");
@@ -302,105 +295,20 @@ static int init_sensor(struct sensing_sensor *sensor, int conns_num)
 
 		LOG_INF("init sensor, reporter:%s, client:%s, connection:%d(%p)",
 			reporter->dev->name, sensor->dev->name, i, conn);
-
-		tmp_conns[i] = conn;
 	}
-
-	/* physical sensor is working at polling mode by default,
-	 * virtual sensor working mode is inherited from its reporter
-	 */
-	if (is_phy_sensor(sensor)) {
-		sensor->mode = SENSOR_TRIGGER_MODE_POLLING;
-	}
-
-	return sensor_api->init(sensor->dev, sensor->info, tmp_conns, conns_num);
-}
-
-/* create struct sensing_sensor *sensor according to sensor device tree */
-static int pre_init_sensor(struct sensing_sensor *sensor)
-{
-	struct sensing_sensor_ctx *sensor_ctx;
-	uint16_t sample_size, total_size;
-	uint16_t conn_sample_size = 0;
-	int i = 0;
-	void *tmp_data;
-
-	__ASSERT(sensor && sensor->dev, "sensor or sensor dev is invalid");
-	sensor_ctx = sensor->dev->data;
-	__ASSERT(sensor_ctx, "sensing sensor context is invalid");
-
-	sample_size = sensor_ctx->register_info->sample_size;
-	for (i = 0; i < sensor->reporter_num; i++) {
-		conn_sample_size += get_reporter_sample_size(sensor, i);
-	}
-
-	/* total memory to be allocated for a sensor according to sensor device tree:
-	 * 1) sample data point to struct sensing_sensor->data_buf
-	 * 2) size of struct sensing_connection* for sensor connection to its reporter
-	 * 3) reporter sample size to be stored in connection data
-	 */
-	total_size = sample_size + sensor->reporter_num * sizeof(*sensor->conns) +
-		     conn_sample_size;
-
-	/* total size for different sensor maybe different, for example:
-	 * there's no reporter for physical sensor, so no connection memory is needed
-	 * reporter num of each virtual sensor may also different, so connection memory is also
-	 * varied, so here malloc is a must for different sensor.
-	 */
-	tmp_data = malloc(total_size);
-	if (!tmp_data) {
-		LOG_ERR("malloc memory for sensing_sensor error");
-		return -ENOMEM;
-	}
-	sensor->sample_size = sample_size;
-	sensor->data_buf = tmp_data;
-	sensor->conns = (struct sensing_connection *)((uint8_t *)sensor->data_buf + sample_size);
-
-	tmp_data = sensor->conns + sensor->reporter_num;
-	for (i = 0; i < sensor->reporter_num; i++) {
-		sensor->conns[i].data = tmp_data;
-		tmp_data = (uint8_t *)tmp_data + get_reporter_sample_size(sensor, i);
-	}
-
-	if (tmp_data != ((uint8_t *)sensor->data_buf + total_size)) {
-		LOG_ERR("sensor memory assign error, data_buf:%p, tmp_data:%p, size:%d",
-			sensor->data_buf, tmp_data, total_size);
-		free(sensor->data_buf);
-		sensor->data_buf = NULL;
-		return -EINVAL;
-	}
-
-	LOG_INF("pre init sensor, sensor:%s, min_ri:%d(us)",
-		sensor->dev->name, sensor->info->minimal_interval);
-
-	sensor->interval = 0;
-	sensor->sensitivity_count = sensor_ctx->register_info->sensitivity_count;
-	__ASSERT(sensor->sensitivity_count <= CONFIG_SENSING_MAX_SENSITIVITY_COUNT,
-		 "sensitivity count:%d should not exceed MAX_SENSITIVITY_COUNT",
-		 sensor->sensitivity_count);
-	memset(sensor->sensitivity, 0x00, sizeof(sensor->sensitivity));
-
-	sys_slist_init(&sensor->client_list);
-
-	sensor_ctx->priv_ptr = sensor;
 
 	return 0;
 }
 
-static int sensing_init(void)
+static int sensing_init(const struct device *dev)
 {
-	struct sensing_context *ctx = &sensing_ctx;
+	struct sensing_context *ctx = dev->data;
 	struct sensing_sensor *sensor;
 	enum sensing_sensor_state state;
 	int ret = 0;
 	int i = 0;
 
 	LOG_INF("sensing init begin...");
-
-	if (ctx->sensing_initialized) {
-		LOG_INF("sensing is already initialized");
-		return 0;
-	}
 
 	if (ctx->sensor_num == 0) {
 		LOG_WRN("no sensor created by device tree yet");
@@ -409,16 +317,12 @@ static int sensing_init(void)
 
 	for (i = 0; i < ctx->sensor_num; i++) {
 		STRUCT_SECTION_GET(sensing_sensor, i, &sensor);
-		ret = pre_init_sensor(sensor);
-		if (ret) {
-			LOG_ERR("sensing init, pre init sensor error");
-		}
 		sensors[i] = sensor;
 	}
 	ctx->sensors = sensors;
 
 	for_each_sensor(ctx, i, sensor) {
-		ret = init_sensor(sensor, sensor->reporter_num);
+		ret = init_sensor(sensor);
 		if (ret) {
 			LOG_ERR("sensor:%s initial error", sensor->dev->name);
 		}
@@ -431,30 +335,8 @@ static int sensing_init(void)
 	}
 
 	k_sem_init(&ctx->event_sem, 0, 1);
-	k_sem_init(&ctx->dispatch_sem, 0, 1);
 
-	/* sensing subsystem runtime thread: sensor scheduling and sensor data processing */
-	ctx->runtime_id = k_thread_create(&ctx->runtime_thread, runtime_stack,
-			CONFIG_SENSING_RUNTIME_THREAD_STACK_SIZE,
-			(k_thread_entry_t) sensing_runtime_thread, ctx, NULL, NULL,
-			CONFIG_SENSING_RUNTIME_THREAD_PRIORITY, 0, K_NO_WAIT);
-	if (!ctx->runtime_id) {
-		LOG_ERR("create sensing runtime thread error");
-		return -EAGAIN;
-	}
-
-	/* sensor dispatch thread: get sensor data from senss and dispatch data */
-	ctx->dispatch_id = k_thread_create(&ctx->dispatch_thread, dispatch_stack,
-			CONFIG_SENSING_DISPATCH_THREAD_STACK_SIZE,
-			(k_thread_entry_t) sensing_dispatch_thread, ctx, NULL, NULL,
-			CONFIG_SENSING_DISPATCH_THREAD_PRIORITY, 0, K_NO_WAIT);
-	if (!ctx->dispatch_id) {
-		LOG_ERR("create dispatch thread error");
-		return -EAGAIN;
-	}
-
-	ring_buf_init(&ctx->sensor_ring_buf, sizeof(ctx->buf), ctx->buf);
-
+	LOG_INF("create sensing runtime thread ok");
 	ctx->sensing_initialized = true;
 
 	return ret;
@@ -467,15 +349,12 @@ int open_sensor(struct sensing_sensor *sensor, struct sensing_connection **conn)
 	if (sensor->state != SENSING_SENSOR_STATE_READY)
 		return -EINVAL;
 
-	/* allocate struct sensing_connection *conn and conn data for application client */
-	tmp_conn = malloc(sizeof(*tmp_conn) + sensor->sample_size);
+	/* create connection from sensor to application(client = NULL) */
+	tmp_conn = malloc(sizeof(*tmp_conn));
 	if (!tmp_conn) {
-		LOG_ERR("malloc memory for struct sensing_connection error");
 		return -ENOMEM;
 	}
-	tmp_conn->data = (uint8_t *)tmp_conn + sizeof(*tmp_conn);
 
-	/* create connection from sensor to application(client = NULL) */
 	init_connection(tmp_conn, sensor, NULL);
 
 	*conn = tmp_conn;
@@ -498,10 +377,10 @@ int close_sensor(struct sensing_connection **conn)
 
 	sys_slist_find_and_remove(&tmp_conn->source->client_list, &tmp_conn->snode);
 
-	*conn = NULL;
-	free(*conn);
-
 	save_config_and_notify(tmp_conn->source);
+
+	free(*conn);
+	*conn = NULL;
 
 	return 0;
 }
@@ -520,7 +399,7 @@ int sensing_register_callback(struct sensing_connection *conn,
 		LOG_ERR("callback should not be NULL");
 		return -ENODEV;
 	}
-	conn->data_evt_cb = cb_list->on_data_event;
+	conn->callback_list = *cb_list;
 
 	return 0;
 }
@@ -632,9 +511,8 @@ int sensing_get_sensors(int *sensor_nums, const struct sensing_sensor_info **inf
 	return 0;
 }
 
-struct sensing_context *get_sensing_ctx(void)
-{
-	return &sensing_ctx;
-}
+K_THREAD_DEFINE(sensing_runtime, CONFIG_SENSING_RUNTIME_THREAD_STACK_SIZE, sensing_runtime_thread,
+		&sensing_ctx, NULL, NULL, CONFIG_SENSING_RUNTIME_THREAD_PRIORITY, 0, 0);
 
-SYS_INIT(sensing_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
+DEVICE_DT_INST_DEFINE(0, sensing_init, NULL, &sensing_ctx, NULL,		\
+		POST_KERNEL, CONFIG_SENSOR_INIT_PRIORITY, NULL);

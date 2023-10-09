@@ -20,16 +20,19 @@ struct phy_3d_sensor_custom {
 	q31_t (*sensor_value_to_q31)(struct sensor_value *val);
 };
 
-struct phy_3d_sensor_context {
-	const struct device *dev;
-	const struct device *hw_dev;
-	const int32_t sensor_type;
+struct phy_3d_sensor_data {
 	const struct phy_3d_sensor_custom *custom;
 	struct sensor_trigger trig;
 	bool data_ready_enabled;
 	bool data_ready_support;
 	uint32_t interval;
-	uint32_t sensitivities[PHY_3D_SENSOR_CHANNEL_NUM];
+	struct sensor_value sensitivities[PHY_3D_SENSOR_CHANNEL_NUM];
 };
+
+struct phy_3d_sensor_config {
+	const struct device *hw_dev;
+	const int32_t sensor_type;
+};
+
 
 #endif

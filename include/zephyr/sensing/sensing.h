@@ -115,7 +115,8 @@ typedef void *sensing_sensor_handle_t;
  */
 typedef void (*sensing_data_event_t)(
 		sensing_sensor_handle_t handle,
-		const void *buf);
+		const void *buf,
+		void *context);
 
 /**
  * @struct sensing_sensor_info
@@ -149,6 +150,7 @@ struct sensing_sensor_info {
  */
 struct sensing_callback_list {
 	sensing_data_event_t on_data_event;
+	void *context;
 };
 /**
  * @struct sensing_sensor_config

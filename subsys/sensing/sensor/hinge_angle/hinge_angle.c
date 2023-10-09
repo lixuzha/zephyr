@@ -29,47 +29,15 @@ struct hinge_angle_context {
 	void *algo_handle;
 };
 
-static int hinge_init(const struct device *dev,
-	const struct sensing_sensor_info *info, const sensing_sensor_handle_t *reporter_handles,
-	int32_t reporters_count)
+static int hinge_init(const struct device *dev)
 {
-
-	int32_t i;
-	struct hinge_angle_context *ctx = sensing_sensor_get_ctx_data(dev);
-	const struct sensing_sensor_info *rpt_info = NULL;
-
 	LOG_INF("[%s] name: %s", __func__, dev->name);
-
-	ctx->base_acc_handle = NULL;
-	ctx->lid_acc_handle = NULL;
-
-	for (i = 0; i < reporters_count; i++) {
-		rpt_info = sensing_get_sensor_info(reporter_handles[i]);
-
-		LOG_INF("[%s] reporter_handles[%d] %p, type 0x%x",
-			__func__, i, reporter_handles[i], rpt_info->type);
-
-		if (rpt_info->type ==
-			SENSING_SENSOR_TYPE_MOTION_ACCELEROMETER_3D) {
-			if (strcmp(rpt_info->name, "base-accel") == 0) {
-				ctx->base_acc_handle = reporter_handles[i];
-				continue;
-			} else if (strcmp(rpt_info->name, "lid-accel") == 0) {
-				ctx->lid_acc_handle = reporter_handles[i];
-				continue;
-			}
-		}
-
-		LOG_WRN("[%s] unused reporter_handles[%d] %d, type 0x%x",
-			__func__, i, reporter_handles[i], rpt_info->type);
-	}
 
 	return 0;
 }
 
 static int hinge_set_interval(const struct device *dev, uint32_t value)
 {
-
 	int ret;
 
 	struct sensing_sensor_config base_acc_config;
@@ -99,53 +67,91 @@ static int hinge_set_interval(const struct device *dev, uint32_t value)
 	return 0;
 }
 
-static int hinge_get_interval(const struct device *dev, uint32_t *value)
+static int hinge_attr_set(const struct device *dev,
+		enum sensor_channel chan,
+		enum sensor_attribute attr,
+		const struct sensor_value *val)
 {
+	const struct phy_3d_sensor_config *cfg = dev->config;
+	struct phy_3d_sensor_data *data = dev->data;
+	int ret = 0;
+
+	switch (attr) {
+	case SENSOR_ATTR_HYSTERESIS:
+		ret = phy_3d_sensor_attr_set_hyst(dev, chan, val);
+		break;
+
+	default:
+		chan = data->custom->chan_all;
+		ret = sensor_attr_set(cfg->hw_dev, chan, attr, val);
+		break;
+	}
+
+	LOG_INF("%s:%s attr:%d ret:%d", __func__, dev->name, attr, ret);
+	return ret;
+}
+
+static int hinge_submit(const struct device *dev,
+		struct rtio_iodev_sqe *sqe)
+{
+	const struct phy_3d_sensor_config *cfg = dev->config;
+	struct phy_3d_sensor_data *data = dev->data;
+	struct sensing_sensor_value_3d_q31 *sample;
+	struct sensor_value value[PHY_3D_SENSOR_CHANNEL_NUM];
+	uint32_t buffer_len;
+	int i, ret;
+
+	ret = rtio_sqe_rx_buf(sqe, sizeof(*sample), sizeof(*sample),
+			(uint8_t **)&sample, &buffer_len);
+	if (ret) {
+		rtio_iodev_sqe_err(sqe, ret);
+		return ret;
+	}
+
+	ret = sensor_sample_fetch_chan(cfg->hw_dev, data->custom->chan_all);
+	if (ret) {
+		LOG_ERR("%s: sample fetch failed: %d", dev->name, ret);
+		rtio_iodev_sqe_err(sqe, ret);
+		return ret;
+	}
+
+	ret = sensor_channel_get(cfg->hw_dev, data->custom->chan_all, value);
+	if (ret) {
+		LOG_ERR("%s: channel get failed: %d", dev->name, ret);
+		rtio_iodev_sqe_err(sqe, ret);
+		return ret;
+	}
+
+	for (i = 0; i < ARRAY_SIZE(value); ++i) {
+		sample->readings[0].v[i] =
+			data->custom->sensor_value_to_q31(&value[i]);
+	}
+
+	sample->header.reading_count = 1;
+	sample->shift = data->custom->shift;
+
+	LOG_DBG("%s: Sample data:\t x: %d, y: %d, z: %d",
+			dev->name,
+			sample->readings[0].x,
+			sample->readings[0].y,
+			sample->readings[0].z);
+
+	rtio_iodev_sqe_ok(sqe, 0);
 	return 0;
 }
 
-static int hinge_set_sensitivity(const struct device *dev, int index,
-	uint32_t value)
-{
-	return 0;
-}
-
-static int hinge_get_sensitivity(const struct device *dev, int index,
-	uint32_t *value)
-{
-	return 0;
-}
-
-static int hinge_process(const struct device *dev,
-			 const sensing_sensor_handle_t reporter_handle,
-			 void *buf,
-			 int32_t size)
-{
-	return 0;
-}
-
-static int hinge_sensitivity_test(const struct device *dev, int index,
-				  uint32_t sensitivity, void *last_sample_buf,
-				  int last_sample_size, void *current_sample_buf,
-				  int current_sample_size)
-{
-	return 0;
-}
-
-static const struct sensing_sensor_api hinge_api = {
-	.init = hinge_init,
-	.get_interval = hinge_get_interval,
-	.set_interval = hinge_set_interval,
-	.get_sensitivity = hinge_get_sensitivity,
-	.set_sensitivity = hinge_set_sensitivity,
-	.process = hinge_process,
-	.sensitivity_test = hinge_sensitivity_test,
+static const struct sensor_driver_api hinge_api = {
+	.attr_set = hinge_attr_set,
+	.submit = hinge_submit,
 };
 
 #define DT_DRV_COMPAT zephyr_sensing_hinge_angle
 #define SENSING_HINGE_ANGLE_DT_DEFINE(_inst) \
-	static struct hinge_angle_context _CONCAT(hinge_ctx, _inst) = { 0 }; \
-	SENSING_SENSOR_DT_DEFINE(DT_DRV_INST(_inst), &hinge_reg, \
-		&_CONCAT(hinge_ctx, _inst), &hinge_api);
+	static struct hinge_angle_context _CONCAT(hinge_ctx, _inst); 	\
+	SENSING_SENSOR_DT_INST_DEFINE(_inst, &hinge_reg,		\
+		&hinge_init, NULL,					\
+		&_CONCAT(hinge_ctx, _inst), NULL,			\
+		POST_KERNEL, CONFIG_SENSOR_INIT_PRIORITY,		\
+		&hinge_api);
 
 DT_INST_FOREACH_STATUS_OKAY(SENSING_HINGE_ANGLE_DT_DEFINE);
