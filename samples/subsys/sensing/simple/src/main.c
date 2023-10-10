@@ -13,24 +13,54 @@
 
 LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 
-static void acc_data_event_callback(sensing_sensor_handle_t handle, const void *buf)
+#include <stdlib.h>
+static int64_t shifted_q31_to_scaled_int64(q31_t q, int8_t shift, int64_t scale)
+{
+	int64_t scaled_value;
+	int64_t shifted_value;
+
+	shifted_value = (int64_t)q << shift;
+	shifted_value = llabs(shifted_value);
+
+	scaled_value =
+		FIELD_GET(GENMASK64(31 + shift, 31), shifted_value) * scale +
+		(FIELD_GET(GENMASK64(30, 0), shifted_value) * scale / BIT(31));
+
+	if (q < 0) {
+		scaled_value = -scaled_value;
+	}
+
+	return scaled_value;
+}
+
+static void acc_data_event_callback(sensing_sensor_handle_t handle,
+		const void *buf, void *context)
 {
 	const struct sensing_sensor_info *info = sensing_get_sensor_info(handle);
 	struct sensing_sensor_value_3d_q31 *sample = (struct sensing_sensor_value_3d_q31 *)buf;
+	ARG_UNUSED(context);
 
-	LOG_INF("%s(%d), handle:%p, Sensor:%s data:(x:%d, y:%d, z:%d)",
+	LOG_INF("%s(%d), handle:%p, Sensor:%s data:(x:%lld, y:%lld, z:%lld)",
 		__func__, __LINE__, handle, info->name,
-		sample->readings[0].x,
-		sample->readings[0].y,
-		sample->readings[0].z);
+		shifted_q31_to_scaled_int64(sample->readings[0].x, sample->shift,
+			1000000),
+		shifted_q31_to_scaled_int64(sample->readings[0].y, sample->shift,
+			1000000),
+		shifted_q31_to_scaled_int64(sample->readings[0].z, sample->shift,
+			1000000));
 }
 
-static void hinge_angle_data_event_callback(sensing_sensor_handle_t handle, const void *buf)
+static void hinge_angle_data_event_callback(sensing_sensor_handle_t handle,
+		const void *buf, void *context)
 {
 	const struct sensing_sensor_info *info = sensing_get_sensor_info(handle);
 	struct sensing_sensor_value_q31 *sample = (struct sensing_sensor_value_q31 *)buf;
+	ARG_UNUSED(context);
 
-	LOG_INF("handle:%p, Sensor:%s data:(v:%d)", handle, info->name, sample->readings[0].v);
+	LOG_INF("%s: handle:%p, Sensor:%s data:(v:%lld)",
+		__func__, handle, info->name,
+		shifted_q31_to_scaled_int64(sample->readings[0].v, sample->shift,
+			1000000));
 }
 
 int main(void)
