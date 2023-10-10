@@ -6,6 +6,7 @@
 
 #include <stdlib.h>
 #include <zephyr/drivers/sensor.h>
+#include <zephyr/dsp/dsp.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/util.h>
 #include <zephyr/sensing/sensing_sensor.h>
@@ -13,6 +14,8 @@
 LOG_MODULE_REGISTER(hinge_angle, CONFIG_SENSING_LOG_LEVEL);
 
 #define HINGE_ANGLE_ACC_INTERVAL_US          100000
+
+#define HINGE_REPORTER_NUM 2
 
 static struct sensing_sensor_register_info hinge_reg = {
 	.flags = SENSING_SENSOR_FLAG_REPORT_ON_CHANGE,
@@ -22,47 +25,29 @@ static struct sensing_sensor_register_info hinge_reg = {
 };
 
 struct hinge_angle_context {
-	uint32_t interval;
-	uint32_t sensitivity;
-	sensing_sensor_handle_t base_acc_handle;
-	sensing_sensor_handle_t lid_acc_handle;
-	void *algo_handle;
+	struct rtio_iodev_sqe *sqe;
+	sensing_sensor_handle_t reporters[HINGE_REPORTER_NUM];
+	struct sensing_sensor_value_3d_q31 sample[HINGE_REPORTER_NUM];
+	int has_sample[HINGE_REPORTER_NUM];
 };
 
 static int hinge_init(const struct device *dev)
 {
-	LOG_INF("[%s] name: %s", __func__, dev->name);
-
-	return 0;
-}
-
-static int hinge_set_interval(const struct device *dev, uint32_t value)
-{
+	struct hinge_angle_context *data = dev->data;
 	int ret;
 
-	struct sensing_sensor_config base_acc_config;
-	struct sensing_sensor_config lid_acc_config;
-	struct hinge_angle_context *ctx = sensing_sensor_get_ctx_data(dev);
-	uint32_t acc_interval = value ? HINGE_ANGLE_ACC_INTERVAL_US : 0;
-
-	base_acc_config.attri = SENSING_SENSOR_ATTRIBUTE_INTERVAL;
-	base_acc_config.interval = HINGE_ANGLE_ACC_INTERVAL_US;
-	ret = sensing_set_config(ctx->base_acc_handle, &base_acc_config, 1);
-	if (ret) {
-		LOG_ERR("base_acc sensing_set_interval error:%d\n", ret);
+	ret = sensing_sensor_get_reporters(dev,
+			SENSING_SENSOR_TYPE_MOTION_ACCELEROMETER_3D,
+			data->reporters, HINGE_REPORTER_NUM);
+	if (ret != HINGE_REPORTER_NUM) {
+		LOG_ERR("%s: reporter mismatch:%d", dev->name, ret);
+		return -ENODEV;
 	}
 
-	lid_acc_config.attri = SENSING_SENSOR_ATTRIBUTE_INTERVAL;
-	lid_acc_config.interval = HINGE_ANGLE_ACC_INTERVAL_US;
-	ret = sensing_set_config(ctx->lid_acc_handle, &lid_acc_config, 1);
-	if (ret) {
-		LOG_ERR("lid_acc sensing_set_interval error:%d\n", ret);
-	}
-
-	ctx->interval = value;
-	LOG_INF("[%s] name: %s, value %d acc_interval %d", __func__, dev->name,
-		value, acc_interval);
-
+	LOG_INF("%s:Found reporter 0: %s", dev->name,
+			sensing_get_sensor_info(data->reporters[0])->name);
+	LOG_INF("%s:Found reporter 1: %s", dev->name,
+			sensing_get_sensor_info(data->reporters[1])->name);
 
 	return 0;
 }
@@ -72,71 +57,37 @@ static int hinge_attr_set(const struct device *dev,
 		enum sensor_attribute attr,
 		const struct sensor_value *val)
 {
-	const struct phy_3d_sensor_config *cfg = dev->config;
-	struct phy_3d_sensor_data *data = dev->data;
+	struct sensing_sensor_config config = {0};
+	struct hinge_angle_context *data = dev->data;
 	int ret = 0;
 
 	switch (attr) {
+	case SENSOR_ATTR_SAMPLING_FREQUENCY:
+		config.attri = SENSING_SENSOR_ATTRIBUTE_INTERVAL;
+		config.interval = (uint32_t)(USEC_PER_SEC * 1000LL /
+				sensor_value_to_milli(val));
+		ret = sensing_set_config(data->reporters[0], &config, 1);
+		ret |= sensing_set_config(data->reporters[1], &config, 1);
+		break;
+
 	case SENSOR_ATTR_HYSTERESIS:
-		ret = phy_3d_sensor_attr_set_hyst(dev, chan, val);
 		break;
 
 	default:
-		chan = data->custom->chan_all;
-		ret = sensor_attr_set(cfg->hw_dev, chan, attr, val);
+		ret = -ENOTSUP;
 		break;
 	}
 
-	LOG_INF("%s:%s attr:%d ret:%d", __func__, dev->name, attr, ret);
+	LOG_INF("%s set attr:%d ret:%d", dev->name, attr, ret);
 	return ret;
 }
 
 static int hinge_submit(const struct device *dev,
 		struct rtio_iodev_sqe *sqe)
 {
-	const struct phy_3d_sensor_config *cfg = dev->config;
-	struct phy_3d_sensor_data *data = dev->data;
-	struct sensing_sensor_value_3d_q31 *sample;
-	struct sensor_value value[PHY_3D_SENSOR_CHANNEL_NUM];
-	uint32_t buffer_len;
-	int i, ret;
+	struct hinge_angle_context *data = dev->data;
 
-	ret = rtio_sqe_rx_buf(sqe, sizeof(*sample), sizeof(*sample),
-			(uint8_t **)&sample, &buffer_len);
-	if (ret) {
-		rtio_iodev_sqe_err(sqe, ret);
-		return ret;
-	}
-
-	ret = sensor_sample_fetch_chan(cfg->hw_dev, data->custom->chan_all);
-	if (ret) {
-		LOG_ERR("%s: sample fetch failed: %d", dev->name, ret);
-		rtio_iodev_sqe_err(sqe, ret);
-		return ret;
-	}
-
-	ret = sensor_channel_get(cfg->hw_dev, data->custom->chan_all, value);
-	if (ret) {
-		LOG_ERR("%s: channel get failed: %d", dev->name, ret);
-		rtio_iodev_sqe_err(sqe, ret);
-		return ret;
-	}
-
-	for (i = 0; i < ARRAY_SIZE(value); ++i) {
-		sample->readings[0].v[i] =
-			data->custom->sensor_value_to_q31(&value[i]);
-	}
-
-	sample->header.reading_count = 1;
-	sample->shift = data->custom->shift;
-
-	LOG_DBG("%s: Sample data:\t x: %d, y: %d, z: %d",
-			dev->name,
-			sample->readings[0].x,
-			sample->readings[0].y,
-			sample->readings[0].z);
-
-	rtio_iodev_sqe_ok(sqe, 0);
+	data->sqe = sqe;
 	return 0;
 }
 
@@ -145,10 +96,62 @@ static const struct sensor_driver_api hinge_api = {
 	.submit = hinge_submit,
 };
 
+static void hinge_reporter_on_data_event(sensing_sensor_handle_t handle,
+		const void *buf, void *context)
+{
+	struct hinge_angle_context *data = context;
+	struct sensing_sensor_value_q31 *sample;
+	uint32_t buffer_len = 0;
+	int both = 0;
+	int i, ret;
+
+	for (i = 0; i < HINGE_REPORTER_NUM; ++i) {
+		if (handle == data->reporters[i]) {
+			memcpy(&data->sample[i], buf, sizeof(data->sample[i]));
+			data->has_sample[i] = 1;
+		}
+		both += data->has_sample[i];
+	}
+
+	if (both == HINGE_REPORTER_NUM) {
+		q63_t result;
+		int32_t val;
+		int scale = 1000000;
+		int shift = data->sample[0].shift;
+
+		data->has_sample[0] = 0;
+		data->has_sample[1] = 0;
+
+		ret = rtio_sqe_rx_buf(data->sqe, sizeof(*sample), sizeof(*sample),
+				(uint8_t **)&sample, &buffer_len);
+		if (ret) {
+			rtio_iodev_sqe_err(data->sqe, ret);
+			return;
+		}
+
+		zdsp_dot_prod_q31(data->sample[0].readings[0].v,
+				data->sample[1].readings[0].v,
+				3, &result);
+
+		val = (int64_t)FIELD_GET(GENMASK64(63, 48 - shift * 2), result);
+		val *= scale;
+		val += FIELD_GET(GENMASK64(47 - shift * 2, 0), result) * scale / ((INT64_C(1) << (48 - shift * 2)) - 1);
+
+		sample->readings[0].v = (q31_t)(((int64_t)val * BIT(31 - shift) / scale));
+
+		rtio_iodev_sqe_ok(data->sqe, 0);
+	}
+}
+
 #define DT_DRV_COMPAT zephyr_sensing_hinge_angle
 #define SENSING_HINGE_ANGLE_DT_DEFINE(_inst) \
 	static struct hinge_angle_context _CONCAT(hinge_ctx, _inst); 	\
+	static const struct sensing_callback_list _CONCAT(hinge_cb, _inst) = {\
+		.on_data_event = hinge_reporter_on_data_event,		\
+		.context = &_CONCAT(hinge_ctx, _inst),			\
+	}; 								\
 	SENSING_SENSOR_DT_INST_DEFINE(_inst, &hinge_reg,		\
+		&_CONCAT(hinge_cb, _inst),				\
 		&hinge_init, NULL,					\
 		&_CONCAT(hinge_ctx, _inst), NULL,			\
 		POST_KERNEL, CONFIG_SENSOR_INIT_PRIORITY,		\
