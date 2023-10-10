@@ -430,6 +430,7 @@ struct bmi160_bus_io {
 struct bmi160_cfg {
 	union bmi160_bus bus;
 	const struct bmi160_bus_io *bus_io;
+	int32_t dummy_data[3][3];
 #if defined(CONFIG_BMI160_TRIGGER)
 	struct gpio_dt_spec interrupt;
 #endif
@@ -492,6 +493,7 @@ struct bmi160_data {
 	union bmi160_pmu_status pmu_sts;
 	union bmi160_sample sample;
 	struct bmi160_scale scale;
+	int temp;
 
 #ifdef CONFIG_BMI160_TRIGGER_OWN_THREAD
 	struct k_sem sem;

@@ -9,9 +9,8 @@
 
 #define DT_DRV_COMPAT bosch_bmi160
 
-#define LOG_LEVEL CONFIG_SPI_LOG_LEVEL
 #include <zephyr/logging/log.h>
-LOG_MODULE_REGISTER(bosch_bmi160);
+LOG_MODULE_REGISTER(bosch_bmi160, CONFIG_SENSOR_LOG_LEVEL);
 
 #include <zephyr/sys/byteorder.h>
 #include <bmi160.h>
@@ -59,7 +58,7 @@ static void sample_read(union bmi160_sample *buf)
 	static uint8_t raw_data[] = { 0x01, 0x0b, 0xac, 0x0e, 0x57, 0x12,
 				      0x01, 0x00, 0x89, 0x06, 0x11, 0x0d };
 
-	LOG_INF("Sample read");
+	LOG_DBG("Sample read");
 	memcpy(buf->raw, raw_data, ARRAY_SIZE(raw_data));
 }
 
@@ -127,39 +126,39 @@ static int reg_read(const struct emul *target, int regn)
 	const struct bmi160_emul_cfg *cfg = target->cfg;
 	int val;
 
-	LOG_INF("read %x =", regn);
+	LOG_DBG("read %x =", regn);
 	val = cfg->reg[regn];
 	switch (regn) {
 	case BMI160_REG_CHIPID:
-		LOG_INF("   * get chipid");
+		LOG_DBG("   * get chipid");
 		break;
 	case BMI160_REG_PMU_STATUS:
-		LOG_INF("   * get pmu");
+		LOG_DBG("   * get pmu");
 		val = data->pmu_status;
 		break;
 	case BMI160_REG_STATUS:
-		LOG_INF("   * status");
+		LOG_DBG("   * status");
 		val |= BMI160_DATA_READY_BIT_MASK;
 		break;
 	case BMI160_REG_ACC_CONF:
-		LOG_INF("   * acc conf");
+		LOG_DBG("   * acc conf");
 		break;
 	case BMI160_REG_GYR_CONF:
-		LOG_INF("   * gyr conf");
+		LOG_DBG("   * gyr conf");
 		break;
 	case BMI160_SPI_START:
-		LOG_INF("   * Bus start");
+		LOG_DBG("   * Bus start");
 		break;
 	case BMI160_REG_ACC_RANGE:
-		LOG_INF("   * acc range");
+		LOG_DBG("   * acc range");
 		break;
 	case BMI160_REG_GYR_RANGE:
-		LOG_INF("   * gyr range");
+		LOG_DBG("   * gyr range");
 		break;
 	default:
 		LOG_INF("Unknown read %x", regn);
 	}
-	LOG_INF("       = %x", val);
+	LOG_DBG("       = %x", val);
 
 	return val;
 }

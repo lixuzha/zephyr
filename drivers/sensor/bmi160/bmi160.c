@@ -818,8 +818,20 @@ static inline void bmi160_acc_channel_get(const struct device *dev,
 					  struct sensor_value *val)
 {
 	struct bmi160_data *data = dev->data;
+	const struct bmi160_cfg *cfg = dev->config;
 
 	bmi160_channel_convert(chan, data->scale.acc, data->sample.acc, val);
+
+	if (chan == SENSOR_CHAN_ACCEL_XYZ) {
+		int i, j;
+		for (i = 0; i < 3; ++i) {
+			j = data->temp % 3;
+			val->val1 = cfg->dummy_data[j][i] / 1000000;
+			val->val2 = cfg->dummy_data[j][i] % 1000000;
+			val++;
+		}
+		data->temp++;
+	}
 }
 #endif
 
@@ -1068,10 +1080,17 @@ int bmi160_pm(const struct device *dev, enum pm_device_action action)
 
 /* Instantiation macros used when a device is on a SPI bus */
 #define BMI160_DEFINE_SPI(inst)						   \
-	static struct bmi160_data bmi160_data_##inst;			   \
+	static struct bmi160_data bmi160_data_##inst = {		   \
+		.temp = inst,						   \
+	};			   					   \
 	static const struct bmi160_cfg bmi160_cfg_##inst = {		   \
 		.bus.spi = SPI_DT_SPEC_INST_GET(inst, SPI_WORD_SET(8), 0), \
 		.bus_io = &bmi160_bus_io_spi,				   \
+		.dummy_data = {						\
+			{0, 0, -SENSOR_G},				\
+			{0, SENSOR_G, 0},				\
+			{0, 0, SENSOR_G}				\
+		},							\
 		BMI160_TRIGGER_CFG(inst)				   \
 	};								   \
 	BMI160_DEVICE_INIT(inst)
@@ -1081,6 +1100,11 @@ int bmi160_pm(const struct device *dev, enum pm_device_action action)
 	{					       \
 		.bus.i2c = I2C_DT_SPEC_INST_GET(inst), \
 		.bus_io = &bmi160_bus_io_i2c,	       \
+		.dummy_data = {						\
+			{0, 0, SENSOR_G},				\
+			{0, 0, SENSOR_G},				\
+			{0, 0, SENSOR_G}				\
+		},							\
 		BMI160_TRIGGER_CFG(inst)	       \
 	}
 
