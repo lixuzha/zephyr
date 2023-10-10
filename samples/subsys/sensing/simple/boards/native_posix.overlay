@@ -49,6 +49,7 @@
 			friendly-name = "Hinge Angle Sensor";
 			reporters = <&base_accel &lid_accel>;
 			minimal-interval = <100000>;
+			stream-mode;
 		};
 	};
 };
