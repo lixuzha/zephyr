@@ -593,6 +593,15 @@ struct sensor_read_config {
 	const size_t max;
 };
 
+#define SENSOR_DT_CHANNEL_ARRAY_NAME(name)				\
+	_CONCAT(__channel_array_, name)
+
+#define SENSOR_DT_TRIGGER_ARRAY_NAME(name)				\
+	_CONCAT(__trigger_array_, name)
+
+#define SENSOR_DT_READ_CONFIG_NAME(name)				\
+	_CONCAT(__sensor_read_config_, name)
+
 /**
  * @brief Define a reading instance of a sensor
  *
@@ -608,26 +617,26 @@ struct sensor_read_config {
  * @endcode
  */
 #define SENSOR_DT_READ_IODEV(name, dt_node, ...)                                                   \
-	static enum sensor_channel __channel_array_##name[] = {__VA_ARGS__};                       \
-	static struct sensor_read_config __sensor_read_config_##name = {                           \
+	static enum sensor_channel SENSOR_DT_CHANNEL_ARRAY_NAME(name)[] = {__VA_ARGS__};           \
+	static struct sensor_read_config SENSOR_DT_READ_CONFIG_NAME(name) = {                      \
 		.sensor = DEVICE_DT_GET(dt_node),                                                  \
 		.is_streaming = false,                                                             \
-		.channels = __channel_array_##name,                                                \
-		.count = ARRAY_SIZE(__channel_array_##name),                                       \
-		.max = ARRAY_SIZE(__channel_array_##name),                                         \
+		.channels = SENSOR_DT_CHANNEL_ARRAY_NAME(name),                                                \
+		.count = ARRAY_SIZE(SENSOR_DT_CHANNEL_ARRAY_NAME(name)),                                       \
+		.max = ARRAY_SIZE(SENSOR_DT_CHANNEL_ARRAY_NAME(name)),                                         \
 	};                                                                                         \
-	RTIO_IODEV_DEFINE(name, &__sensor_iodev_api, &__sensor_read_config_##name)
+	RTIO_IODEV_DEFINE(name, &__sensor_iodev_api, &SENSOR_DT_READ_CONFIG_NAME(name))
 
 #define SENSOR_DT_STREAM_IODEV(name, dt_node, ...)                                                 \
-	static enum sensor_trigger_type __trigger_array_##name[] = {__VA_ARGS__};                  \
-	static struct sensor_read_config __sensor_read_config_##name = {                           \
+	static struct sensor_stream_trigger SENSOR_DT_TRIGGER_ARRAY_NAME(name)[] = {__VA_ARGS__};      \
+	static struct sensor_read_config SENSOR_DT_READ_CONFIG_NAME(name) = {                      \
 		.sensor = DEVICE_DT_GET(dt_node),                                                  \
 		.is_streaming = true,                                                              \
-		.triggers = __trigger_array_##name,                                                \
-		.count = ARRAY_SIZE(__trigger_array_##name),                                       \
-		.max = ARRAY_SIZE(__trigger_array_##name),                                         \
+		.triggers = SENSOR_DT_TRIGGER_ARRAY_NAME(name),                                    \
+		.count = ARRAY_SIZE(SENSOR_DT_TRIGGER_ARRAY_NAME(name)),                           \
+		.max = ARRAY_SIZE(SENSOR_DT_TRIGGER_ARRAY_NAME(name)),                             \
 	};                                                                                         \
-	RTIO_IODEV_DEFINE(name, &__sensor_iodev_api, &__sensor_read_config_##name)
+	RTIO_IODEV_DEFINE(name, &__sensor_iodev_api, &SENSOR_DT_READ_CONFIG_NAME(name))
 
 /* Used to submit an RTIO sqe to the sensor's iodev */
 typedef int (*sensor_submit_t)(const struct device *sensor, struct rtio_iodev_sqe *sqe);
